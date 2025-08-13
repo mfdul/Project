@@ -1,0 +1,315 @@
+"""
+Process mining from event log created by NaivePlanner
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib
+import pm4py
+matplotlib.use("Agg")  # Use non-interactive backend for saving figures
+matplotlib.rcParams["figure.constrained_layout.use"] = True
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# ---- settings ----
+LOG_PATH = Path("temp/event_log.csv")
+OUT_DIR = Path("temp/analysis")
+FIG_DIR = OUT_DIR / "figs"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+def read_log():
+    df = pd.read_csv(LOG_PATH, parse_dates=["start_time", "completion_time"])
+    df["duration_hours"] = (df["completion_time"] - df["start_time"]).dt.total_seconds() / 3600
+    return df
+
+def _shorten(s, maxlen=70):
+    s = str(s)
+    return s if len(s) <= maxlen else s[:maxlen-1] + "..."
+
+def compute_variants(df):
+    seq = (df.sort_values(["case_id","start_time"])
+             .groupby("case_id")["event_label"]
+             .apply(lambda s: " > ".join(s.tolist())))
+    variants = (seq.value_counts()
+                   .rename_axis("variant")
+                   .reset_index(name="count"))
+    variants["percent"] = 100 * variants["count"] / variants["count"].sum()
+    variants.to_csv(OUT_DIR / "variants.csv", index=False)
+    return variants
+
+def compute_dfg(df):
+    s = df.sort_values(["case_id","start_time"]).copy()
+    s["next"] = s.groupby("case_id")["event_label"].shift(-1)
+    dfg = (s.dropna(subset=["next"])
+             .groupby(["event_label","next"]).size()
+             .reset_index(name="count")
+             .rename(columns={"event_label":"source","next":"target"}))
+    dfg.to_csv(OUT_DIR / "dfg.csv", index=False)
+    return dfg, s
+
+def compute_edge_waits(s):
+    # Wait from end of activity i until start of next activity j, within the same case.
+    s["next_start"] = s.groupby("case_id")["start_time"].shift(-1)     # start of next
+    s["edge_wait_h"] = (s["next_start"] - s["completion_time"]).dt.total_seconds()/3600.0
+    edge_waits = (s.dropna(subset=["next"])
+                   .groupby(["event_label","next"])
+                   .agg(edges=("next","size"),
+                        avg_wait_h=("edge_wait_h","mean"),
+                        p90_wait_h=("edge_wait_h", lambda x: np.nanpercentile(x, 90)))
+                   .reset_index()
+                   .rename(columns={"event_label":"source","next":"target"}))
+    edge_waits.to_csv(OUT_DIR / "edge_waits.csv", index=False)
+    return edge_waits
+
+def compute_activity_durations(df):
+    dur = (df.groupby("event_label")
+             .agg(executions=("event_label","size"),
+                  cases=("case_id","nunique"),
+                  avg_h=("duration_hours","mean"),
+                  p50_h=("duration_hours","median"),
+                  p90_h=("duration_hours", lambda x: x.quantile(0.9)))
+             .reset_index()
+             .sort_values("avg_h", ascending=False))
+    dur.to_csv(OUT_DIR / "activity_durations.csv", index=False)
+    return dur
+
+def compute_cycle_times(df):
+    cycles = (df.groupby("case_id")
+                .agg(start=("start_time","min"),
+                     end=("completion_time","max"))
+                .reset_index())
+    cycles["cycle_time_h"] = (cycles["end"] - cycles["start"]).dt.total_seconds()/3600.0
+    cycles.to_csv(OUT_DIR / "case_cycle_times.csv", index=False)
+    return cycles
+
+def compute_throughput(df):
+    # Daily counts of first event per case (arrivals) and last event per case (completions)
+    firsts = (df.sort_values(["case_id","start_time"])
+                .groupby("case_id").first().reset_index())
+    lasts  = (df.sort_values(["case_id","completion_time"])
+                .groupby("case_id").last().reset_index())
+    arrivals = firsts["start_time"].dt.floor("D").value_counts().sort_index()
+    completions = lasts["completion_time"].dt.floor("D").value_counts().sort_index()
+    th = pd.DataFrame({"arrivals": arrivals, "completions": completions}).fillna(0)
+    th.index.name = "day"
+    th = th.reset_index().sort_values("day")
+    th.to_csv(OUT_DIR / "throughput_daily.csv", index=False)
+    return th
+
+# ---- plotting helpers (matplotlib only; one chart per figure; no explicit colors) ----
+def plot_top_variants(variants, top=15):
+    v = variants.head(top).iloc[::-1]
+    labels = [_shorten(x) for x in v["variant"]]
+    h = max(4, 0.45 * len(v))       # height scales with item count
+    w = 14                          # wider figure for long labels
+    plt.figure(figsize=(w, h), constrained_layout=True)
+    plt.barh(range(len(v)), v["count"])
+    plt.yticks(range(len(v)), labels)
+    plt.xlabel("count")
+    plt.title(f"Top {top} variants")
+    plt.savefig(FIG_DIR / "variants_top.png", dpi=200, bbox_inches="tight")
+    plt.close()
+
+def plot_activity_avg_duration(dur):
+    n = len(dur)
+    plt.figure(figsize=(max(10, 0.6*n), 6), constrained_layout=True)
+    x = np.arange(n)
+    plt.bar(x, dur["avg_h"].values)
+    plt.xticks(x, dur["event_label"].tolist(), rotation=45, ha="right")
+    plt.ylabel("avg duration (h)")
+    plt.title("Average duration by activity")
+    plt.savefig(FIG_DIR / "activity_avg_duration.png", dpi=200, bbox_inches="tight")
+    plt.close()
+
+def plot_activity_boxplots(df):
+    groups, labels = [], []
+    for k, g in df.groupby("event_label"):
+        groups.append(g["duration_hours"].dropna().values)
+        labels.append(k)
+    plt.figure(figsize=(max(10, 0.5*len(labels)), 6), constrained_layout=True)
+    plt.boxplot(groups, showfliers=False)
+    plt.xticks(range(1, len(labels)+1), labels, rotation=45, ha="right")
+    plt.ylabel("duration (h)")
+    plt.title("Duration distributions by activity")
+    plt.savefig(FIG_DIR / "activity_duration_boxplots.png", dpi=200, bbox_inches="tight")
+    plt.close()
+
+def plot_cycle_time_hist(cycles, bins=40):
+    plt.figure()
+    plt.hist(cycles["cycle_time_h"].dropna().values, bins=bins)
+    plt.xlabel("case cycle time (h)")
+    plt.ylabel("count")
+    plt.title("Case cycle time distribution")
+    plt.savefig(FIG_DIR / "cycle_time_hist.png", dpi=200)
+    plt.close()
+
+def plot_throughput(th):
+    plt.figure()
+    plt.plot(th["day"], th["arrivals"], label="arrivals")
+    plt.plot(th["day"], th["completions"], label="completions")
+    plt.xlabel("day")
+    plt.ylabel("count")
+    plt.title("Daily arrivals vs completions")
+    plt.legend()
+    plt.savefig(FIG_DIR / "throughput_daily.png", dpi=200)
+    plt.close()
+
+def plot_dfg_heatmap(dfg):
+    acts = sorted(set(dfg["source"]).union(set(dfg["target"])))
+    mat = pd.DataFrame(0, index=acts, columns=acts)
+    for _, row in dfg.iterrows():
+        mat.loc[row["source"], row["target"]] = row["count"]
+    n = len(acts)
+    plt.figure(figsize=(max(8, 0.5*n), max(6, 0.5*n)), constrained_layout=True)
+    plt.imshow(mat.values, aspect="auto")
+    plt.xticks(range(n), acts, rotation=45, ha="right")
+    plt.yticks(range(n), acts)
+    plt.colorbar(label="directly-follows count")
+    plt.title("DFG adjacency (counts)")
+    plt.savefig(FIG_DIR / "dfg_heatmap.png", dpi=200, bbox_inches="tight")
+    plt.close()
+    mat.to_csv(OUT_DIR / "dfg_adjacency_matrix.csv")
+
+def plot_sample_gantt(df, max_cases=20):
+    # Simple Gantt for first N cases (ordered by start)
+    ordered_cases = (df.groupby("case_id")["start_time"].min()
+                       .sort_values().head(max_cases).index.tolist())
+    d = df[df["case_id"].isin(ordered_cases)].copy()
+    d = d.sort_values(["case_id","start_time"])
+    # map case_id to rows
+    rows = {cid:i for i,cid in enumerate(ordered_cases)}
+    plt.figure(figsize=(10, 0.4*max(6, len(ordered_cases))))
+    for _, r in d.iterrows():
+        y = rows[r["case_id"]]
+        plt.barh(y,
+                 width=(r["completion_time"]-r["start_time"]).total_seconds()/3600.0,
+                 left=(r["start_time"]-d["start_time"].min()).total_seconds()/3600.0,
+                 edgecolor="black")
+    plt.yticks(range(len(ordered_cases)), [str(c) for c in ordered_cases])
+    plt.xlabel("hours from first start in sample")
+    plt.title(f"Gantt chart (first {len(ordered_cases)} cases)")
+    plt.savefig(FIG_DIR / "gantt_sample.png", dpi=200)
+    plt.close()
+
+def discover_and_export_models(df, out_dir="temp/models", make_images=True):
+    import pm4py
+    from pathlib import Path
+    from pm4py.visualization.petri_net import visualizer as pn_visualizer
+    from pm4py.algo.discovery.alpha import algorithm as alpha_miner
+    from pm4py.objects.conversion.log import converter as log_converter
+    from pm4py.objects.conversion.process_tree import converter as pt_converter
+
+
+    # --- prepare log ---
+    out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
+    df_pm = df.rename(columns={
+        "case_id": "case:concept:name",
+        "event_label": "concept:name",
+        "start_time": "time:timestamp",
+    })[["case:concept:name", "concept:name", "time:timestamp"]].copy()
+    df_pm = pm4py.format_dataframe(df_pm,
+                                   case_id="case:concept:name",
+                                   activity_key="concept:name",
+                                   timestamp_key="time:timestamp")
+    log = log_converter.apply(df_pm, variant=log_converter.Variants.TO_EVENT_LOG)
+
+    # 1) Alpha Miner → Petri
+    alpha_net, initial_marking, final_marking = alpha_miner.apply(log)
+    gviz = pn_visualizer.apply(alpha_net, initial_marking, final_marking)
+    pn_visualizer.view(gviz)
+
+    # 2) Inductive → Petri
+    net, init_marking, final_marking = pm4py.discover_petri_net_inductive(log)
+    pm4py.view_petri_net(net, init_marking, final_marking)
+    
+
+    # 3) Process Tree → BPMN
+    process_tree = pm4py.discover_process_tree_inductive(log)
+    bpmn_model = pm4py.convert_to_bpmn(process_tree)
+    pm4py.view_bpmn(bpmn_model)
+
+    # 4) Heuristic Miner → Petri
+    net, initial_marking, final_marking = pm4py.discover_petri_net_heuristics(log, dependency_threshold=0.6)
+    pm4py.view_petri_net(net, initial_marking, final_marking)
+
+    # 5) DFG
+    dfg, start_activities, end_activities = pm4py.discover_dfg(log)
+    pm4py.view_dfg(dfg, start_activities, end_activities)
+
+    # 6) Inductive
+    tree = pm4py.discover_process_tree_inductive(log)
+    pm4py.view_process_tree(tree)
+
+
+def write_index_html():
+    imgs = [
+        "variants_top.png",
+        "activity_avg_duration.png",
+        "activity_duration_boxplots.png",
+        "cycle_time_hist.png",
+        "throughput_daily.png",
+        "dfg_heatmap.png",
+        "gantt_sample.png",
+    ]
+    csvs = [
+        "variants.csv",
+        "dfg.csv",
+        "dfg_adjacency_matrix.csv",
+        "activity_durations.csv",
+        "edge_waits.csv",
+        "case_cycle_times.csv",
+        "throughput_daily.csv",
+        "summary.txt",
+    ]
+    html = ["<h1>Process Mining Report</h1>"]
+    html.append("<h2>Figures</h2>")
+    for f in imgs:
+        p = f"figs/{f}"
+        if (FIG_DIR / f).exists():
+            html.append(f"<h3>{f}</h3><img src='{p}' style='max-width:100%;height:auto;'>")
+    html.append("<h2>Data</h2><ul>")
+    for c in csvs:
+        if (OUT_DIR / c).exists():
+            html.append(f"<li><a href='{c}'>{c}</a></li>")
+    html.append("</ul>")
+    (OUT_DIR / "index.html").write_text("\n".join(html), encoding="utf-8")
+    print(f"[report] Open: {OUT_DIR / 'index.html'} in your browser")
+
+def main():
+    df = read_log()
+
+    # Core tables
+    variants = compute_variants(df)
+    dfg, s = compute_dfg(df)
+    edge_waits = compute_edge_waits(s)
+    dur = compute_activity_durations(df)
+    cycles = compute_cycle_times(df)
+    th = compute_throughput(df)
+
+    # Plots
+    plot_top_variants(variants, top=15)
+    plot_activity_avg_duration(dur)
+    plot_activity_boxplots(df)
+    plot_cycle_time_hist(cycles)
+    plot_throughput(th)
+    plot_dfg_heatmap(dfg)
+    plot_sample_gantt(df, max_cases=20)
+
+    # Quick textual summary
+    summary = {
+        "events": int(len(df)),
+        "cases": int(df["case_id"].nunique()),
+        "activities": int(df["event_label"].nunique()),
+        "mean_cycle_time_h": round(cycles["cycle_time_h"].mean(), 2),
+        "p90_cycle_time_h": round(cycles["cycle_time_h"].quantile(0.9), 2),
+    }
+    pd.Series(summary).to_csv(OUT_DIR / "summary.txt")
+    
+    discover_and_export_models(df, out_dir="temp/models", make_images=True)
+        
+    write_index_html()
+
+
+if __name__ == "__main__":
+    main()

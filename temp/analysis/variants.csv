@@ -1,0 +1,19 @@
+variant,count,percent
+patient_referal > time_for_intake > intake > nursing > releasing,5123,33.18435030444358
+patient_referal > time_for_intake > intake > surgery > nursing > releasing,3252,21.064904780411972
+emergency_patient > ER_treatment > releasing,2997,19.41313641663428
+emergency_patient > ER_treatment > nursing > releasing,2273,14.723409768104677
+emergency_patient > ER_treatment > surgery > nursing > releasing,765,4.9553050913330745
+patient_referal > time_for_intake > intake,614,3.9771991190568725
+patient_referal > time_for_intake > intake > surgery,241,1.5610830418447985
+patient_referal > time_for_intake > intake > surgery > nursing > surgery > nursing > releasing,44,0.28501101178909183
+patient_referal,41,0.2655784428034719
+patient_referal > time_for_intake > intake > nursing > nursing > releasing,33,0.2137582588418189
+emergency_patient > ER_treatment,14,0.09068532193289286
+emergency_patient,11,0.07125275294727296
+emergency_patient > ER_treatment > surgery,10,0.06477522995206633
+emergency_patient > ER_treatment > surgery > nursing > surgery > nursing > releasing,9,0.05829770695685969
+emergency_patient > ER_treatment > nursing > nursing > releasing,6,0.0388651379712398
+patient_referal > time_for_intake > intake > surgery > nursing > surgery,2,0.012955045990413265
+patient_referal > time_for_intake > intake > nursing,2,0.012955045990413265
+patient_referal > time_for_intake > intake > surgery > nursing > surgery > nursing > surgery > nursing > releasing,1,0.006477522995206633

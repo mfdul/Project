@@ -1,0 +1,13 @@
+source,target,count
+ER_treatment,nursing,2279
+ER_treatment,releasing,2997
+ER_treatment,surgery,784
+emergency_patient,ER_treatment,6074
+intake,nursing,5158
+intake,surgery,3540
+nursing,nursing,39
+nursing,releasing,11506
+nursing,surgery,57
+patient_referal,time_for_intake,9312
+surgery,nursing,4128
+time_for_intake,intake,9312
