@@ -127,7 +127,7 @@ class HeuristicPlanner(Planner):
         def waiting_key(cid):
             arr = self.arrival_time.get(cid, now)
             return now - arr
-
+###
         # New cases
         for cid in sorted(cases_to_plan, key=waiting_key, reverse=True):
             earliest = now + ADMIT_HORIZON_HOURS
