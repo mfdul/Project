@@ -1,6 +1,6 @@
 ,0
-events,70624.0
-cases,15438.0
+events,2253.0
+cases,604.0
 activities,8.0
-mean_cycle_time_h,258.93
-p90_cycle_time_h,860.0
+mean_cycle_time_h,65.21
+p90_cycle_time_h,152.83

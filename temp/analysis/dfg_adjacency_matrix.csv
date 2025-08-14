@@ -1,9 +1,9 @@
 ,ER_treatment,emergency_patient,intake,nursing,patient_referal,releasing,surgery,time_for_intake
-ER_treatment,0,0,0,2279,0,2997,784,0
-emergency_patient,6074,0,0,0,0,0,0,0
-intake,0,0,0,5158,0,0,3540,0
-nursing,0,0,0,39,0,11506,57,0
-patient_referal,0,0,0,0,0,0,0,9312
+ER_treatment,0,0,0,71,0,139,22,0
+emergency_patient,241,0,0,0,0,0,0,0
+intake,0,0,0,137,0,0,101,0
+nursing,0,0,0,0,0,299,1,0
+patient_referal,0,0,0,0,0,0,0,274
 releasing,0,0,0,0,0,0,0,0
-surgery,0,0,0,4128,0,0,0,0
-time_for_intake,0,0,9312,0,0,0,0,0
+surgery,0,0,0,92,0,0,0,0
+time_for_intake,0,0,272,0,0,0,0,0
